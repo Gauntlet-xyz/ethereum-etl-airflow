@@ -16,9 +16,6 @@ from google.cloud.bigquery import TimePartitioning, SchemaField
 
 from ethereumetl_airflow.bigquery_utils import submit_bigquery_job
 
-logging.basicConfig()
-logging.getLogger().setLevel(logging.DEBUG)
-
 
 def build_load_dag(
     dag_id,
@@ -374,3 +371,4 @@ def adjust_schema_for_kovan(dag_id, task, schema):
     else:
         result = schema
     return result
+```[cite: 18]

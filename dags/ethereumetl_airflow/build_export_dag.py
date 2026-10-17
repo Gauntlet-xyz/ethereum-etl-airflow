@@ -2,6 +2,7 @@ from __future__ import print_function
 
 import os
 import logging
+import urllib.parse
 from datetime import timedelta
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -19,6 +20,32 @@ from ethereumetl.cli import (
     export_traces,
     extract_field,
 )
+
+
+def redact_provider_uri(provider_uri):
+    """Mask credentials embedded in an RPC URI before it is written to logs.
+
+    Provider URIs routinely carry the API key in the path
+    (https://mainnet.infura.io/v3/<key>), in the query string, or as
+    user:password@host — none of which may end up in Airflow task logs.
+    """
+    if not provider_uri:
+        return provider_uri
+    try:
+        parsed = urllib.parse.urlsplit(str(provider_uri))
+        masked_segments = []
+        for segment in parsed.path.split('/'):
+            # Short segments ("eth", "v3", "api") are structural; longer ones
+            # are API keys or similar secrets.
+            masked_segments.append(segment if len(segment) < 12 else '***')
+        netloc = parsed.hostname or ''
+        if parsed.port:
+            netloc = '%s:%s' % (netloc, parsed.port)
+        # Query string and userinfo are dropped entirely (they can only contain
+        # credentials).
+        return urllib.parse.urlunsplit((parsed.scheme, netloc, '/'.join(masked_segments), '', ''))
+    except Exception:
+        return '[unparseable provider uri]'
 
 # When running on Composer, use the suggested Data folder for temp storage
 # This is a folder in the Composer Bucket, mounted locally using gcsfuse
@@ -122,7 +149,7 @@ def build_export_dag(
             download_from_gcs(bucket=output_bucket, object=export_path + filename, filename=file_path)
 
     def get_block_range(tempdir, date, provider_uri):
-        logging.info('Calling get_block_range_for_date({}, {}, ...)'.format(provider_uri, date))
+        logging.info('Calling get_block_range_for_date({}, {}, ...)'.format(redact_provider_uri(provider_uri), date))
         get_block_range_for_date.callback(
             provider_uri=provider_uri, date=date, output=os.path.join(tempdir, "blocks_meta.txt")
         )
@@ -138,7 +165,7 @@ def build_export_dag(
             start_block, end_block = get_block_range(tempdir, logical_date, provider_uri)
 
             logging.info('Calling export_blocks_and_transactions({}, {}, {}, {}, {}, ...)'.format(
-                start_block, end_block, export_batch_size, provider_uri, export_max_workers))
+                start_block, end_block, export_batch_size, redact_provider_uri(provider_uri), export_max_workers))
 
             export_blocks_and_transactions.callback(
                 start_block=start_block,
@@ -176,7 +203,7 @@ def build_export_dag(
             )
 
             logging.info('Calling export_receipts_and_logs({}, ..., {}, {}, ...)'.format(
-                export_batch_size, provider_uri, export_max_workers))
+                export_batch_size, redact_provider_uri(provider_uri), export_max_workers))
             export_receipts_and_logs.callback(
                 batch_size=export_batch_size,
                 transaction_hashes=os.path.join(tempdir, "transaction_hashes.txt"),
@@ -217,7 +244,7 @@ def build_export_dag(
                 export_path("contracts", logical_date), os.path.join(tempdir, "contracts.json")
             )
 
-            logging.info('Calling extract_tokens(..., {}, {})'.format(export_max_workers, provider_uri))
+            logging.info('Calling extract_tokens(..., {}, {})'.format(export_max_workers, redact_provider_uri(provider_uri)))
             extract_tokens.callback(
                 contracts=os.path.join(tempdir, "contracts.json"),
                 output=os.path.join(tempdir, "tokens.json"),
@@ -257,7 +284,7 @@ def build_export_dag(
             start_block, end_block = get_block_range(tempdir, logical_date, provider_uri)
 
             logging.info('Calling export_traces({}, {}, {}, ...,{}, {}, {}, {})'.format(
-                start_block, end_block, export_batch_size, export_max_workers, provider_uri,
+                start_block, end_block, export_batch_size, export_max_workers, redact_provider_uri(provider_uri),
                 export_genesis_traces_option, export_daofork_traces_option
             ))
             export_traces.callback(
