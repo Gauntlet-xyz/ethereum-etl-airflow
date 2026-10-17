@@ -1,8 +1,15 @@
+### `cicd-on-merge.yml`
+```yaml
 ---
 name: CICD (Merge)
 on:
     push:
         branches: [master]
+
+# Read-only token: the job only checks out code and writes credentials to a
+# temporary file inside the runner, never back to the repository.
+permissions:
+  contents: read
 
 jobs:
 
@@ -13,7 +20,7 @@ jobs:
 
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v2
+        uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2.7.0
         with:
           fetch-depth: 0
 
@@ -36,15 +43,25 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v2
+      uses: actions/checkout@ee0669bd1cc54295c223e0bb666b733df41de1c5 # v2.7.0
 
     - name: Build Docker image
       run: |
         docker build -t ethereum-etl-parse:latest -f parse.Dockerfile .
 
     - name: Run Docker image
+      env:
+        SERVICE_ACCOUNT_PROD: ${{ secrets.SERVICE_ACCOUNT_PROD }}
+        # Directory names originate from merged PR content; pass them via the
+        # environment so they are never interpolated into the shell script text
+        # (script-injection hardening — this job also materializes GCP
+        # service-account credentials).
+        MATRIX_DIR: ${{ matrix.dir }}
+        PARSE_PROJECT: ${{ vars.PARSE_PROJECT }}
+        PARSE_STATE_BUCKET: ${{ vars.PARSE_STATE_BUCKET }}
+        PARSE_DESTINATION_DATASET_PROJECT_ID: ${{ vars.PARSE_DESTINATION_DATASET_PROJECT_ID }}
       run: |
-        DATASET_NAME=${{ matrix.dir }}
+        DATASET_NAME=$MATRIX_DIR
         DATASET_NAME=${DATASET_NAME#dags/resources/stages/parse/table_definitions/} # this will remove 'dags/resources/stages/parse/table_definitions/' from start
 
         echo "$SERVICE_ACCOUNT_PROD" > ./credentials.json
@@ -52,11 +69,10 @@ jobs:
           -v $PWD:/app \
           -e GOOGLE_APPLICATION_CREDENTIALS=/app/credentials.json \
           ethereum-etl-parse:latest \
-          --project ${{ vars.PARSE_PROJECT }} \
-          --dataset_name $DATASET_NAME \
-          --dataset_folder "/app/${{ matrix.dir }}" \
-          --state_bucket ${{ vars.PARSE_STATE_BUCKET }} \
-          --destination_dataset_project_id ${{ vars.PARSE_DESTINATION_DATASET_PROJECT_ID }}
+          --project "$PARSE_PROJECT" \
+          --dataset_name "$DATASET_NAME" \
+          --dataset_folder "/app/$MATRIX_DIR" \
+          --state_bucket "$PARSE_STATE_BUCKET" \
+          --destination_dataset_project_id "$PARSE_DESTINATION_DATASET_PROJECT_ID"
         rm ./credentials.json
-      env:
-        SERVICE_ACCOUNT_PROD: ${{ secrets.SERVICE_ACCOUNT_PROD }}
+```[cite: 19]
